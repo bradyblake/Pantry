@@ -11,6 +11,8 @@ backend/**/__pycache__/
 
 # Build output
 frontend/build/
+frontend/.svelte-kit/
+frontend/.vercel/
 
 # Database
 data/*.db

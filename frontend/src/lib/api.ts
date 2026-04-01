@@ -7,7 +7,7 @@ import type {
 	Zone, ZoneCreate, LedCommand, RfidTag, RfidTagCreate, PutItBackAlert, FindIngredientsResponse
 } from './types';
 
-const API_BASE = import.meta.env.DEV ? 'http://localhost:8000' : '';
+const API_BASE = import.meta.env.VITE_API_URL || (import.meta.env.DEV ? 'http://localhost:8000' : '');
 
 async function fetchApi<T>(
 	endpoint: string,

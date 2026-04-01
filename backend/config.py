@@ -11,8 +11,10 @@ class Settings(BaseSettings):
     api_host: str = "0.0.0.0"
     api_port: int = 8000
 
-    # CORS - allow frontend dev server
+    # CORS - allow frontend dev server and production
     cors_origins: list[str] = ["http://localhost:5173", "http://127.0.0.1:5173"]
+    # Set CORS_ORIGINS env var to comma-separated URLs for production, e.g.:
+    # CORS_ORIGINS=https://your-app.vercel.app,http://localhost:5173
 
     # AI Provider for recipe parsing: "gemini", "groq", or "claude"
     # Can also be comma-separated for fallback order: "gemini,groq"
