@@ -1,0 +1,895 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<link rel="icon" href="/favicon.ico"/>
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
+<meta name="theme-color" content="#e67e22"/>
+<meta name="description" content="Home recipe manager - scan, organize, and plan meals"/>
+<meta name="apple-mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-status-bar-style" content="default"/>
+<meta name="apple-mobile-web-app-title" content="Recipes"/>
+<link rel="apple-touch-icon" href="/logo192.png"/>
+<link rel="manifest" href="/manifest.json"/>
+<title>Recipe Manager</title>
+<link href="/static/css/main.c721a03e.css" rel="stylesheet">
+<style>
+.match-detail{font-size:13px;padding:4px 0 4px 8px;border-left:3px solid var(--success);margin:4px 0}
+.match-detail .pantry-name{font-weight:600;color:var(--text)}
+.match-detail .pantry-loc{color:#0c5460;font-weight:500}
+.match-detail .pantry-qty{color:var(--text-light)}
+.not-match-btn{background:none;border:1px solid var(--danger);color:var(--danger);padding:2px 8px;border-radius:6px;font-size:11px;cursor:pointer;margin-left:8px;white-space:nowrap}
+.not-match-btn:active{background:var(--danger);color:#fff}
+.ingredient-line{padding:6px 0;border-bottom:1px solid var(--border)}
+.ingredient-line:last-child{border-bottom:none}
+.ing-status{display:inline-block;width:20px;height:20px;border-radius:50%;text-align:center;line-height:20px;font-size:12px;font-weight:700;margin-right:8px;vertical-align:middle}
+.ing-have{background:#d4edda;color:#155724}
+.ing-miss{background:#f8d7da;color:#721c24}
+.quick-pills{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0 12px}
+.qpill{padding:6px 14px;border-radius:20px;font-size:13px;font-weight:600;cursor:pointer;border:2px solid var(--border);background:var(--card-bg);color:var(--text-light)}
+.qpill.active{border-color:var(--primary);background:var(--primary-light);color:var(--primary-dark)}
+.toast{position:fixed;bottom:90px;left:50%;transform:translateX(-50%);background:#333;color:#fff;padding:10px 24px;border-radius:8px;font-size:14px;z-index:300;animation:fadeInOut 2.5s ease}
+@keyframes fadeInOut{0%{opacity:0;transform:translateX(-50%) translateY(10px)}10%{opacity:1;transform:translateX(-50%) translateY(0)}80%{opacity:1}100%{opacity:0}}
+.chat-messages{display:flex;flex-direction:column;gap:8px;margin-bottom:12px;min-height:200px}
+.chat-msg{max-width:85%;padding:10px 14px;border-radius:12px;font-size:15px;line-height:1.5;white-space:pre-wrap;word-wrap:break-word}
+.chat-msg.user{align-self:flex-end;background:var(--primary);color:#fff;border-bottom-right-radius:4px}
+.chat-msg.ai{align-self:flex-start;background:var(--card-bg);border:1px solid var(--border);border-bottom-left-radius:4px}
+.chat-msg .saved-tag{display:inline-block;background:var(--success);color:#fff;padding:2px 8px;border-radius:4px;font-size:12px;font-weight:600;margin-top:6px}
+.chat-input-area{display:flex;gap:8px;position:sticky;bottom:80px;background:var(--bg);padding:8px 0}
+.chat-input-area input{flex:1;margin-bottom:0}
+.chat-input-area button{flex-shrink:0}
+.modal-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.5);z-index:200;display:flex;align-items:center;justify-content:center;padding:16px}
+.modal-sheet{background:#fff;border-radius:var(--radius);width:100%;max-width:500px;max-height:85vh;overflow-y:auto;padding:20px}
+.modal-sheet h2{font-size:18px;margin-bottom:16px}
+.modal-close{float:right;background:none;border:none;font-size:24px;cursor:pointer;color:var(--text-light);padding:0 4px}
+.edit-pantry-item{display:flex;align-items:center;gap:8px}
+.edit-pantry-item .btn-sm{flex-shrink:0}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script>
+var API = '';
+var currentPage = 'home';
+var recipes = [];
+var pantryItems = [];
+var matchResults = [];
+var tags = [];
+var quickMeals = [];
+var exclusions = [];
+var quickMealFilter = '';
+
+// SVG icons (matching old Lucide icons)
+var icons = {
+  home: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8"/><path d="M3 10a2 2 0 0 1 .709-1.528l7-6a2 2 0 0 1 2.582 0l7 6A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>',
+  book: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 7v14"/><path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/></svg>',
+  cart: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="21" r="1"/><circle cx="19" cy="21" r="1"/><path d="M2.05 2.05h2l2.66 12.42a2 2 0 0 0 2 1.58h9.78a2 2 0 0 0 1.95-1.57l1.65-7.43H5.12"/></svg>',
+  utensils: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m16 2-2.3 2.3a3 3 0 0 0 0 4.2l1.8 1.8a3 3 0 0 0 4.2 0L22 8"/><path d="M15 15 3.3 3.3a4.2 4.2 0 0 0 0 6l7.3 7.3c.7.7 2 .7 2.8 0L15 15Zm0 0 7 7"/><path d="m2.1 21.8 6.4-6.3"/><path d="m19 5-7 7"/></svg>',
+  camera: '<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13.997 4a2 2 0 0 1 1.76 1.05l.486.9A2 2 0 0 0 18.003 7H20a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h1.997a2 2 0 0 0 1.759-1.048l.489-.904A2 2 0 0 1 10.004 4z"/><circle cx="12" cy="13" r="3"/></svg>',
+  clock: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>',
+  star: '<svg width="14" height="14" viewBox="0 0 24 24" fill="#f1c40f" stroke="#f1c40f" stroke-width="2"><path d="M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.396 21.01a.53.53 0 0 1-.77-.56l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.16 9.795a.53.53 0 0 1 .294-.906l5.165-.755a2.122 2.122 0 0 0 1.597-1.16z"/></svg>',
+  starEmpty: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.396 21.01a.53.53 0 0 1-.77-.56l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.16 9.795a.53.53 0 0 1 .294-.906l5.165-.755a2.122 2.122 0 0 0 1.597-1.16z"/></svg>',
+  back: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 19-7-7 7-7"/><path d="M19 12H5"/></svg>',
+  trash: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>',
+  plus: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>',
+  edit: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/></svg>',
+  bolt: '<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg>',
+  chat: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22z"/></svg>',
+  calendar: '<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v4"/><path d="M16 2v4"/><rect width="18" height="18" x="3" y="4" rx="2"/><path d="M3 10h18"/></svg>',
+};
+
+async function api(path, opts) {
+  opts = opts || {};
+  var headers = {'Content-Type':'application/json'};
+  if (opts.headers) { for (var k in opts.headers) headers[k] = opts.headers[k]; }
+  opts.headers = headers;
+  var res = await fetch(API + path, opts);
+  if (!res.ok) throw new Error(await res.text());
+  if (res.status === 204) return null;
+  return res.json();
+}
+
+function showToast(msg) {
+  var t = document.createElement('div');
+  t.className = 'toast';
+  t.textContent = msg;
+  document.body.appendChild(t);
+  setTimeout(function(){t.remove();}, 2600);
+}
+
+async function loadRecipes() { recipes = await api('/api/recipes'); }
+async function loadPantry() { pantryItems = await api('/api/pantry'); }
+async function loadMatches() { matchResults = await api('/api/recipes/match/pantry'); }
+async function loadTags() { tags = await api('/api/tags'); }
+async function loadQuickMeals(type) { quickMeals = await api('/api/quick-meals' + (type ? '?meal_type='+type : '')); }
+async function loadExclusions() { exclusions = await api('/api/match-exclusions'); }
+
+function esc(s) { if (s==null) return ''; var d=document.createElement('div'); d.textContent=String(s); return d.innerHTML; }
+function escAttr(s) { if (s==null) return ''; return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/'/g,'&#39;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+var SKIP_WORDS = {fresh:1,dried:1,ground:1,chopped:1,diced:1,sliced:1,minced:1,large:1,small:1,medium:1,whole:1,boneless:1,skinless:1,raw:1,cooked:1,frozen:1,canned:1,organic:1,unsalted:1,extra:1,virgin:1,light:1,dark:1,sweet:1,hot:1,cold:1,warm:1,thick:1,thin:1,fine:1,coarse:1,crushed:1,shredded:1,grated:1,melted:1,softened:1,packed:1,sifted:1,toasted:1,roasted:1};
+function getKeywords(name) {
+  var words = name.toLowerCase().trim().split(/\s+/), out = [];
+  for (var i=0;i<words.length;i++) if (!SKIP_WORDS[words[i]] && words[i].length>1) out.push(words[i]);
+  return out;
+}
+function findPantryMatch(ingredientName) {
+  var ingLower = ingredientName.toLowerCase().trim();
+  var ingKw = getKeywords(ingLower);
+  var excSet = {};
+  for (var i=0;i<exclusions.length;i++) excSet[exclusions[i].ingredient_name.toLowerCase()+'|'+exclusions[i].pantry_item_name.toLowerCase()] = 1;
+  var matches = [];
+  for (var i=0;i<pantryItems.length;i++) {
+    var item = pantryItems[i], pName = item.name.toLowerCase().trim();
+    if (excSet[ingLower+'|'+pName]) continue;
+    var pKw = getKeywords(pName), isMatch = false;
+    for (var j=0;j<pKw.length;j++) if (ingLower.indexOf(pKw[j])>=0) { isMatch=true; break; }
+    if (!isMatch) for (var j=0;j<ingKw.length;j++) if (pName.indexOf(ingKw[j])>=0) { isMatch=true; break; }
+    if (isMatch) matches.push(item);
+  }
+  return matches.length ? matches : null;
+}
+
+// ── Render ───────────────────────────────────────────────────
+function render() {
+  var root = document.getElementById('root');
+  var navItems = [
+    {id:'home',icon:icons.home,label:'Home'},
+    {id:'recipes',icon:icons.book,label:'Recipes'},
+    {id:'pantry',icon:icons.cart,label:'Pantry'},
+    {id:'matches',icon:icons.utensils,label:'Match'},
+    {id:'chat',icon:icons.chat,label:'Chef AI'},
+  ];
+  var navHtml = '';
+  for (var i=0;i<navItems.length;i++) {
+    var n = navItems[i];
+    navHtml += '<a class="nav-tab '+(currentPage===n.id?'active':'')+'" onclick="navigate(\''+n.id+'\')">'+n.icon+'<span>'+n.label+'</span></a>';
+  }
+  root.innerHTML = '<div class="app">' +
+    '<div class="top-bar"><span class="top-bar-title">Recipe Manager</span></div>' +
+    '<div class="app-content" id="content"></div>' +
+    '<div class="nav-bar">'+navHtml+'</div>' +
+  '</div>';
+  renderPage();
+}
+
+async function navigate(page) {
+  currentPage = page;
+  render();
+  try {
+    if (page==='home') { await loadRecipes(); await loadPantry(); }
+    if (page==='recipes') await loadRecipes();
+    if (page==='matches') { await loadMatches(); await loadExclusions(); }
+    if (page==='pantry') await loadPantry();
+    if (page==='quick') await loadQuickMeals(quickMealFilter);
+    if (page==='meals') await loadMealPlans();
+  } catch(e) { console.error(e); }
+  renderPage();
+}
+
+function renderPage() {
+  var el = document.getElementById('content');
+  if (!el) return;
+  switch(currentPage) {
+    case 'home': renderHome(el); break;
+    case 'recipes': renderRecipes(el); break;
+    case 'matches': renderMatches(el); break;
+    case 'pantry': renderPantry(el); break;
+    case 'quick': renderQuickMeals(el); break;
+    case 'chat': renderChat(el); break;
+    case 'meals': renderMealPlans(el); break;
+    case 'quick': renderQuickMeals(el); break;
+  }
+}
+
+// ── Home ─────────────────────────────────────────────────────
+function renderHome(el) {
+  el.innerHTML = '<div class="page-header"><h1>Recipe Manager</h1></div>' +
+    '<p style="color:var(--text-light);margin-bottom:8px">What would you like to do?</p>' +
+    '<div class="home-grid">' +
+      '<a class="home-card" onclick="navigate(\'recipes\')">'+icons.book.replace(/22/g,'32')+'<div class="home-card-title">My Recipes</div></a>' +
+      '<a class="home-card" onclick="navigate(\'pantry\')">'+icons.cart.replace(/22/g,'32')+'<div class="home-card-title">My Pantry</div></a>' +
+      '<a class="home-card" onclick="navigate(\'matches\')">'+icons.utensils.replace(/22/g,'32')+'<div class="home-card-title">Make What We Have</div></a>' +
+      '<a class="home-card" onclick="navigate(\'quick\')">'+icons.bolt+'<div class="home-card-title">Quick Meals</div></a>' +
+      '<a class="home-card" onclick="navigate(\'meals\')">'+icons.calendar+'<div class="home-card-title">Meal Plans</div></a>' +
+      '<a class="home-card" onclick="navigate(\'chat\')">'+icons.chat.replace(/22/g,'32')+'<div class="home-card-title">Chef AI</div></a>' +
+    '</div>' +
+    '<div style="margin-top:20px"><h3 style="margin-bottom:8px">Stats</h3>' +
+      '<div class="card"><div class="card-subtitle">'+recipes.length+' recipes &middot; '+pantryItems.length+' pantry items</div></div>' +
+    '</div>';
+}
+
+// ── Recipes ──────────────────────────────────────────────────
+function renderRecipes(el) {
+  var html = '<div class="page-header"><h1>My Recipes</h1><span style="color:var(--text-light);font-size:14px">'+recipes.length+' recipes</span></div>' +
+    '<input class="search-bar" placeholder="Search recipes..." id="recipe-search" oninput="filterRecipes()"/>';
+  if (recipes.length===0) {
+    html += '<div class="empty"><p>No recipes yet</p></div>';
+  } else {
+    html += '<div id="recipe-list">';
+    for (var i=0;i<recipes.length;i++) {
+      var r = recipes[i];
+      html += '<a onclick="viewRecipe('+r.id+')" style="text-decoration:none;color:inherit;cursor:pointer">' +
+        '<div class="list-item"><div class="list-item-content">' +
+          '<div class="list-item-title">'+(r.favorite?icons.star+' ':'')+esc(r.title)+
+            (r.quick_meal_type?' <span class="tag">'+esc(r.quick_meal_type)+'</span>':'')+
+          '</div>' +
+          '<div class="list-item-sub">'+icons.clock+' '+((r.prep_time||0)+(r.cook_time||0))+' min' +
+            (r.tags&&r.tags.length?' &middot; '+r.tags.map(esc).join(', '):'')+
+          '</div>' +
+        '</div></div></a>';
+    }
+    html += '</div>';
+  }
+  el.innerHTML = html;
+}
+
+function filterRecipes() {
+  var q = (document.getElementById('recipe-search')||{}).value||'';
+  q = q.toLowerCase();
+  var items = document.querySelectorAll('#recipe-list .list-item');
+  for (var i=0;i<items.length;i++) {
+    var parent = items[i].parentElement;
+    parent.style.display = items[i].textContent.toLowerCase().indexOf(q)>=0 ? '' : 'none';
+  }
+}
+
+async function viewRecipe(id) {
+  var recipe;
+  try { recipe = await api('/api/recipes/'+id); } catch(e) { showToast('Failed to load'); return; }
+  await loadPantry();
+  await loadExclusions();
+  showRecipeModal(recipe);
+}
+
+function showRecipeModal(recipe) {
+  var overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.onclick = function(e) { if (e.target===overlay) overlay.remove(); };
+
+  var totalTime = (recipe.prep_time||0)+(recipe.cook_time||0);
+  var qmt = recipe.quick_meal_type || '';
+
+  // Build ingredients with match details
+  var ingHtml = '';
+  for (var i=0;i<recipe.ingredients.length;i++) {
+    var ing = recipe.ingredients[i];
+    var pm = findPantryMatch(ing.name);
+    ingHtml += '<div class="ingredient-line">' +
+      '<span class="ing-status '+(pm?'ing-have':'ing-miss')+'">'+(pm?'&#10003;':'&#10007;')+'</span>' +
+      '<strong>'+esc(ing.quantity?ing.quantity+' ':'')+esc(ing.unit||'')+' </strong>'+esc(ing.name)+
+      (ing.notes?' <span style="color:var(--text-light)">('+esc(ing.notes)+')</span>':'');
+    if (pm) {
+      for (var j=0;j<pm.length;j++) {
+        var p = pm[j];
+        ingHtml += '<div class="match-detail">' +
+          '<span class="pantry-name">'+esc(p.name)+'</span> ' +
+          '<span class="pantry-qty">'+esc(p.quantity)+' '+esc(p.unit)+'</span>' +
+          (p.location?' <span class="pantry-loc">@ '+esc(p.location)+'</span>':'') +
+          '<button class="not-match-btn" onclick="excludeMatch(\''+escAttr(ing.name)+'\',\''+escAttr(p.name)+'\',this)">Not a match</button>' +
+        '</div>';
+      }
+    }
+    ingHtml += '</div>';
+  }
+
+  overlay.innerHTML = '<div class="modal-sheet">' +
+    '<button class="modal-close" onclick="this.closest(\'.modal-overlay\').remove()">&times;</button>' +
+    '<h2>'+esc(recipe.title)+' '+(recipe.favorite?icons.star:'')+'</h2>' +
+    (recipe.description?'<p style="color:var(--text-light);margin-bottom:12px">'+esc(recipe.description)+'</p>':'') +
+    '<div style="display:flex;gap:16px;margin-bottom:16px">' +
+      (recipe.prep_time?'<span style="font-size:14px;color:var(--text-light)">'+icons.clock+' '+totalTime+' min</span>':'') +
+      (recipe.servings?'<span style="font-size:14px;color:var(--text-light)">Serves '+recipe.servings+'</span>':'') +
+    '</div>' +
+    (recipe.tags&&recipe.tags.length?'<div style="margin-bottom:12px">'+recipe.tags.map(function(t){return '<span class="tag">'+esc(t)+'</span>';}).join('')+'</div>':'') +
+
+    '<div style="margin-bottom:16px"><label style="display:block;font-size:13px;font-weight:600;color:var(--text-light);margin-bottom:4px">Quick Meal Category</label>' +
+      '<div class="quick-pills">' +
+        '<span class="qpill '+(qmt===''?'active':'')+'" onclick="setQuickMeal('+recipe.id+',\'\',this)">None</span>' +
+        '<span class="qpill '+(qmt==='breakfast'?'active':'')+'" onclick="setQuickMeal('+recipe.id+',\'breakfast\',this)">Breakfast</span>' +
+        '<span class="qpill '+(qmt==='lunch'?'active':'')+'" onclick="setQuickMeal('+recipe.id+',\'lunch\',this)">Lunch</span>' +
+        '<span class="qpill '+(qmt==='dinner'?'active':'')+'" onclick="setQuickMeal('+recipe.id+',\'dinner\',this)">Dinner</span>' +
+        '<span class="qpill '+(qmt==='snack'?'active':'')+'" onclick="setQuickMeal('+recipe.id+',\'snack\',this)">Snack</span>' +
+        '<span class="qpill '+(qmt==='instant'?'active':'')+'" onclick="setQuickMeal('+recipe.id+',\'instant\',this)">Instant</span>' +
+      '</div>' +
+    '</div>' +
+
+    '<div class="card"><h3 style="margin-bottom:12px">Ingredients</h3>'+ingHtml+'</div>' +
+
+    (recipe.instructions?'<div class="card"><h3 style="margin-bottom:12px">Instructions</h3>'+
+      recipe.instructions.split('\n').filter(Boolean).map(function(s,i){
+        return '<div style="padding:8px 0;border-bottom:1px solid var(--border)"><strong style="color:var(--primary)">Step '+(i+1)+'.</strong> '+esc(s.replace(/^\d+[\.\)]\s*/,''))+'</div>';
+      }).join('')+
+    '</div>':'') +
+
+    '<div style="display:flex;gap:8px;margin-top:16px">' +
+      '<button class="btn btn-primary" style="flex:1" onclick="toggleFav('+recipe.id+')">'+
+        (recipe.favorite?'Unfavorite':'Favorite &#11088;')+'</button>' +
+      '<button class="btn btn-secondary" onclick="editRecipe('+recipe.id+')">'+icons.edit+' Edit</button>' +
+    '</div>' +
+  '</div>';
+  document.body.appendChild(overlay);
+}
+
+async function excludeMatch(ingName, pantryName, btn) {
+  try {
+    await api('/api/match-exclusions?ingredient_name='+encodeURIComponent(ingName)+'&pantry_item_name='+encodeURIComponent(pantryName), {method:'POST'});
+    await loadExclusions();
+    btn.closest('.match-detail').remove();
+    showToast('Marked as not a match');
+  } catch(e) { showToast('Error'); }
+}
+
+async function setQuickMeal(recipeId, mealType, el) {
+  try {
+    await api('/api/recipes/'+recipeId+'/quick-meal?meal_type='+encodeURIComponent(mealType), {method:'PUT'});
+    var pills = el.parentElement.querySelectorAll('.qpill');
+    for (var i=0;i<pills.length;i++) pills[i].classList.remove('active');
+    el.classList.add('active');
+    showToast(mealType ? 'Set as '+mealType : 'Removed from quick meals');
+  } catch(e) { showToast('Error'); }
+}
+
+async function toggleFav(id) {
+  try {
+    await api('/api/recipes/'+id+'/favorite', {method:'PUT'});
+    closeModal(); showToast('Updated!');
+    await loadRecipes(); renderPage();
+  } catch(e) { showToast('Error'); }
+}
+
+async function editRecipe(id) {
+  var recipe;
+  try { recipe = await api('/api/recipes/'+id); } catch(e) { return; }
+  closeModal();
+  showEditRecipeModal(recipe);
+}
+
+function showEditRecipeModal(recipe) {
+  var overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.onclick = function(e) { if (e.target===overlay) overlay.remove(); };
+  var ingRows = '';
+  for (var i=0;i<recipe.ingredients.length;i++) {
+    var ing = recipe.ingredients[i];
+    ingRows += '<div class="ingredient-row"><input class="qty" value="'+escAttr(ing.quantity)+'" placeholder="qty"/>' +
+      '<input class="unit" value="'+escAttr(ing.unit)+'" placeholder="unit"/>' +
+      '<input value="'+escAttr(ing.name)+'" placeholder="ingredient" class="ing-name" style="flex:1"/>' +
+      '<button class="btn btn-sm btn-secondary" onclick="this.parentElement.remove()">'+icons.trash+'</button></div>';
+  }
+  overlay.innerHTML = '<div class="modal-sheet">' +
+    '<button class="modal-close" onclick="this.closest(\'.modal-overlay\').remove()">&times;</button>' +
+    '<h2>Edit Recipe</h2>' +
+    '<div class="form-group"><label>Title</label><input id="ed-title" value="'+escAttr(recipe.title)+'"/></div>' +
+    '<div class="form-group"><label>Description</label><textarea id="ed-desc">'+esc(recipe.description)+'</textarea></div>' +
+    '<div class="form-row">' +
+      '<div class="form-group"><label>Prep (min)</label><input type="number" id="ed-prep" value="'+recipe.prep_time+'"/></div>' +
+      '<div class="form-group"><label>Cook (min)</label><input type="number" id="ed-cook" value="'+recipe.cook_time+'"/></div>' +
+      '<div class="form-group"><label>Servings</label><input type="number" id="ed-serv" value="'+recipe.servings+'"/></div>' +
+    '</div>' +
+    '<div class="form-group"><label>Instructions</label><textarea id="ed-instr" style="min-height:120px">'+esc(recipe.instructions)+'</textarea></div>' +
+    '<div class="form-group"><label>Tags (comma-separated)</label><input id="ed-tags" value="'+escAttr(recipe.tags.join(', '))+'"/></div>' +
+    '<div class="form-group"><label>Ingredients</label><div id="ed-ingredients">'+ingRows+'</div>' +
+    '<button class="btn btn-sm btn-secondary" onclick="addIngRow()" style="margin-top:8px">'+icons.plus+' Add Ingredient</button></div>' +
+    '<div style="display:flex;gap:8px;margin-top:16px">' +
+      '<button class="btn btn-primary btn-full" onclick="saveRecipe('+recipe.id+')">Save</button>' +
+      '<button class="btn btn-danger" onclick="deleteRecipe('+recipe.id+')">'+icons.trash+'</button>' +
+    '</div>' +
+  '</div>';
+  document.body.appendChild(overlay);
+}
+
+function addIngRow() {
+  var c = document.getElementById('ed-ingredients');
+  var div = document.createElement('div');
+  div.className = 'ingredient-row';
+  div.innerHTML = '<input class="qty" placeholder="qty"/><input class="unit" placeholder="unit"/>' +
+    '<input placeholder="ingredient" class="ing-name" style="flex:1"/>' +
+    '<button class="btn btn-sm btn-secondary" onclick="this.parentElement.remove()">'+icons.trash+'</button>';
+  c.appendChild(div);
+}
+
+async function saveRecipe(id) {
+  var rows = document.querySelectorAll('#ed-ingredients .ingredient-row');
+  var ingredients = [];
+  for (var i=0;i<rows.length;i++) {
+    var name = (rows[i].querySelector('.ing-name')||{}).value||'';
+    if (name.trim()) ingredients.push({name:name.trim(), quantity:(rows[i].querySelector('.qty')||{}).value||'', unit:(rows[i].querySelector('.unit')||{}).value||'', notes:''});
+  }
+  var tagStr = (document.getElementById('ed-tags')||{}).value||'';
+  try {
+    await api('/api/recipes/'+id, { method:'PUT', body:JSON.stringify({
+      title: document.getElementById('ed-title').value,
+      description: document.getElementById('ed-desc').value,
+      prep_time: parseInt(document.getElementById('ed-prep').value)||0,
+      cook_time: parseInt(document.getElementById('ed-cook').value)||0,
+      servings: parseInt(document.getElementById('ed-serv').value)||4,
+      instructions: document.getElementById('ed-instr').value,
+      ingredients: ingredients,
+      tags: tagStr.split(',').map(function(t){return t.trim();}).filter(Boolean),
+    })});
+    closeModal(); showToast('Recipe saved!');
+    await loadRecipes(); renderPage();
+  } catch(e) { showToast('Error saving'); }
+}
+
+async function deleteRecipe(id) {
+  if (!confirm('Delete this recipe? This cannot be undone.')) return;
+  try { await api('/api/recipes/'+id,{method:'DELETE'}); closeModal(); showToast('Deleted'); await loadRecipes(); renderPage(); } catch(e) { showToast('Error'); }
+}
+
+// ── Matches ──────────────────────────────────────────────────
+function renderMatches(el) {
+  var html = '<div class="page-header"><h1>Make What We Have</h1></div>';
+  if (matchResults.length===0) {
+    html += '<div class="loading"><div class="spinner"></div> Finding recipes you can make...</div>';
+    el.innerHTML = html; return;
+  }
+  var ready=[], almost=[], rest=[];
+  for (var i=0;i<matchResults.length;i++) {
+    var m = matchResults[i];
+    if (m.match_percentage<=0) continue;
+    if (m.match_percentage>=80) (m.match_percentage>=100?ready:almost).push(m);
+    else rest.push(m);
+  }
+  if (ready.length) { html += '<h3 style="margin-bottom:12px;color:var(--success)">Ready to Make</h3>'; html += renderMatchCards(ready); }
+  if (almost.length) { html += '<h3 style="margin:20px 0 12px;color:var(--primary)">Almost There</h3>'; html += renderMatchCards(almost); }
+  if (rest.length) { html += '<h3 style="margin:20px 0 12px;color:var(--text-light)">Need More Items</h3>'; html += renderMatchCards(rest); }
+  if (!ready.length && !almost.length && !rest.length) html += '<div class="empty"><p>No matches found. Add more items to your pantry.</p></div>';
+  el.innerHTML = html;
+}
+
+function renderMatchCards(items) {
+  var html = '';
+  for (var i=0;i<items.length;i++) {
+    var m = items[i], pct = m.match_percentage;
+    var color = pct>=80?'var(--success)':'var(--primary)';
+    html += '<div class="card" onclick="viewRecipe('+m.recipe.id+')" style="cursor:pointer">' +
+      '<div class="card-title">'+esc(m.recipe.title)+'</div>' +
+      '<div class="card-subtitle">'+icons.clock+' '+((m.recipe.prep_time||0)+(m.recipe.cook_time||0))+' min &middot; '+Math.round(pct)+'% match</div>' +
+      '<div class="match-bar-container"><div class="match-bar" style="width:'+pct+'%;background:'+color+'"></div></div>';
+    // Show matched details
+    if (m.matched_details && m.matched_details.length) {
+      html += '<div style="margin-top:8px">';
+      var limit = Math.min(m.matched_details.length, 4);
+      for (var j=0;j<limit;j++) {
+        var d = m.matched_details[j];
+        html += '<div style="font-size:12px;margin-bottom:2px;color:var(--text-light)"><span style="color:var(--success)">&#10003;</span> '+esc(d.ingredient);
+        for (var k=0;k<Math.min(d.matched_pantry_items.length,2);k++) {
+          var p = d.matched_pantry_items[k];
+          html += ' <span style="color:#0c5460">['+esc(p.pantry_name)+(p.location?' @ '+esc(p.location):'')+']</span>';
+        }
+        if (d.matched_pantry_items.length>2) html += ' <span style="color:var(--text-light)">+' +(d.matched_pantry_items.length-2)+' more</span>';
+        html += '</div>';
+      }
+      if (m.matched_details.length>4) html += '<div style="font-size:12px;color:var(--text-light)">+'+(m.matched_details.length-4)+' more matched...</div>';
+      html += '</div>';
+    }
+    if (m.missing_ingredients.length) {
+      html += '<div style="font-size:13px;color:var(--danger);margin-top:4px">Missing: '+m.missing_ingredients.slice(0,3).map(esc).join(', ')+(m.missing_ingredients.length>3?'...':'')+'</div>';
+    }
+    html += '</div>';
+  }
+  return html;
+}
+
+// ── Pantry ───────────────────────────────────────────────────
+function renderPantry(el) {
+  var groups = {};
+  for (var i=0;i<pantryItems.length;i++) {
+    var item = pantryItems[i], cat = item.category||'other';
+    if (!groups[cat]) groups[cat]=[];
+    groups[cat].push(item);
+  }
+  var html = '<div class="page-header"><h1>My Pantry</h1>' +
+    '<button class="btn btn-sm btn-primary" onclick="showAddPantryModal()">'+icons.plus+' Add</button></div>' +
+    '<input class="search-bar" placeholder="Search pantry..." id="pantry-search" oninput="filterPantry()"/>';
+
+  var cats = Object.keys(groups).sort();
+  for (var c=0;c<cats.length;c++) {
+    var cat = cats[c];
+    var items = groups[cat].sort(function(a,b){return a.name.localeCompare(b.name);});
+    html += '<h3 style="font-size:14px;text-transform:uppercase;color:var(--text-light);margin:16px 0 8px">'+esc(cat)+' ('+items.length+')</h3>';
+    for (var i=0;i<items.length;i++) {
+      var item = items[i];
+      html += '<div class="list-item pantry-row">' +
+        '<div class="list-item-content">' +
+          '<div class="list-item-title">'+esc(item.name)+(item.quick_meal_type?' <span class="tag">'+esc(item.quick_meal_type)+'</span>':'')+'</div>' +
+          '<div class="list-item-sub">'+esc(item.quantity)+' '+esc(item.unit)+(item.location?' &middot; '+esc(item.location):'')+'</div>' +
+        '</div>' +
+        '<div class="edit-pantry-item">' +
+          '<button class="btn btn-sm btn-secondary" onclick="editPantryItem('+item.id+')">'+icons.edit+'</button>' +
+          '<button class="btn btn-sm btn-secondary" onclick="deletePantryItem('+item.id+')">'+icons.trash+'</button>' +
+        '</div>' +
+      '</div>';
+    }
+  }
+  el.innerHTML = html;
+}
+
+function filterPantry() {
+  var q = (document.getElementById('pantry-search')||{}).value||'';
+  q = q.toLowerCase();
+  var rows = document.querySelectorAll('.pantry-row');
+  for (var i=0;i<rows.length;i++) rows[i].style.display = rows[i].textContent.toLowerCase().indexOf(q)>=0?'':'none';
+}
+
+function showAddPantryModal() { showPantryFormModal(null); }
+function editPantryItem(id) {
+  for (var i=0;i<pantryItems.length;i++) if (pantryItems[i].id===id) { showPantryFormModal(pantryItems[i]); return; }
+}
+
+function showPantryFormModal(item) {
+  var overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.onclick = function(e) { if (e.target===overlay) overlay.remove(); };
+  var isEdit = !!item;
+  var cats = ['Baking','Canned','Condiments','Dairy','Frozen','Grains','Meat','Other','Produce','Spices'];
+  var catOpts = '';
+  for (var i=0;i<cats.length;i++) {
+    var cv = cats[i].toLowerCase();
+    catOpts += '<option value="'+cv+'" '+(isEdit&&item.category&&item.category.toLowerCase()===cv?'selected':'')+'>'+cats[i]+'</option>';
+  }
+  overlay.innerHTML = '<div class="modal-sheet">' +
+    '<button class="modal-close" onclick="this.closest(\'.modal-overlay\').remove()">&times;</button>' +
+    '<h2>'+(isEdit?'Edit':'Add')+' Pantry Item</h2>' +
+    '<div class="form-group"><label>Name</label><input id="pi-name" value="'+(isEdit?escAttr(item.name):'')+'"/></div>' +
+    '<div class="form-row">' +
+      '<div class="form-group"><label>Quantity</label><input id="pi-qty" value="'+(isEdit?escAttr(item.quantity):'')+'"/></div>' +
+      '<div class="form-group"><label>Unit</label><input id="pi-unit" value="'+(isEdit?escAttr(item.unit):'')+'"/></div>' +
+    '</div>' +
+    '<div class="form-row">' +
+      '<div class="form-group"><label>Category</label><select id="pi-cat">'+catOpts+'</select></div>' +
+      '<div class="form-group"><label>Location</label><input id="pi-loc" value="'+(isEdit?escAttr(item.location):'')+'" placeholder="e.g. Chest Freezer"/></div>' +
+    '</div>' +
+    '<div class="form-group"><label>Quick Meal?</label>' +
+      '<div class="quick-pills">' +
+        '<span class="qpill '+(!isEdit||!item.quick_meal_type?'active':'')+'" onclick="selectPill(this,\'pi-qm\',\'\')">None</span>' +
+        '<span class="qpill '+(isEdit&&item.quick_meal_type==='breakfast'?'active':'')+'" onclick="selectPill(this,\'pi-qm\',\'breakfast\')">Breakfast</span>' +
+        '<span class="qpill '+(isEdit&&item.quick_meal_type==='lunch'?'active':'')+'" onclick="selectPill(this,\'pi-qm\',\'lunch\')">Lunch</span>' +
+        '<span class="qpill '+(isEdit&&item.quick_meal_type==='dinner'?'active':'')+'" onclick="selectPill(this,\'pi-qm\',\'dinner\')">Dinner</span>' +
+        '<span class="qpill '+(isEdit&&item.quick_meal_type==='snack'?'active':'')+'" onclick="selectPill(this,\'pi-qm\',\'snack\')">Snack</span>' +
+        '<span class="qpill '+(isEdit&&item.quick_meal_type==='instant'?'active':'')+'" onclick="selectPill(this,\'pi-qm\',\'instant\')">Instant</span>' +
+      '</div><input type="hidden" id="pi-qm" value="'+(isEdit&&item.quick_meal_type?escAttr(item.quick_meal_type):'')+'"/>' +
+    '</div>' +
+    '<button class="btn btn-primary btn-full" onclick="savePantryItem('+(isEdit?item.id:'null')+')">'+(isEdit?'Save Changes':'Add to Pantry')+'</button>' +
+  '</div>';
+  document.body.appendChild(overlay);
+}
+
+function selectPill(el, hiddenId, value) {
+  var pills = el.parentElement.querySelectorAll('.qpill');
+  for (var i=0;i<pills.length;i++) pills[i].classList.remove('active');
+  el.classList.add('active');
+  document.getElementById(hiddenId).value = value;
+}
+
+async function savePantryItem(id) {
+  var qm = document.getElementById('pi-qm').value;
+  var data = {name:document.getElementById('pi-name').value.trim(), quantity:document.getElementById('pi-qty').value.trim(),
+    unit:document.getElementById('pi-unit').value.trim(), category:document.getElementById('pi-cat').value,
+    location:document.getElementById('pi-loc').value.trim(), quick_meal_type:qm||null};
+  if (!data.name) { showToast('Name is required'); return; }
+  try {
+    if (id) await api('/api/pantry/'+id, {method:'PUT', body:JSON.stringify(data)});
+    else await api('/api/pantry', {method:'POST', body:JSON.stringify(data)});
+    closeModal(); showToast(id?'Updated!':'Added!');
+    await loadPantry(); renderPage();
+  } catch(e) { showToast('Error saving'); }
+}
+
+async function deletePantryItem(id) {
+  if (!confirm('Delete this pantry item?')) return;
+  try { await api('/api/pantry/'+id,{method:'DELETE'}); showToast('Deleted'); await loadPantry(); renderPage(); } catch(e) { showToast('Error'); }
+}
+
+// ── Quick Meals ──────────────────────────────────────────────
+function renderQuickMeals(el) {
+  var html = '<div class="page-header"><h1>Quick Meals</h1></div>' +
+    '<div class="quick-pills">' +
+      '<span class="qpill '+(quickMealFilter===''?'active':'')+'" onclick="setQuickFilter(\'\')">All</span>' +
+      '<span class="qpill '+(quickMealFilter==='breakfast'?'active':'')+'" onclick="setQuickFilter(\'breakfast\')">Breakfast</span>' +
+      '<span class="qpill '+(quickMealFilter==='lunch'?'active':'')+'" onclick="setQuickFilter(\'lunch\')">Lunch</span>' +
+      '<span class="qpill '+(quickMealFilter==='dinner'?'active':'')+'" onclick="setQuickFilter(\'dinner\')">Dinner</span>' +
+      '<span class="qpill '+(quickMealFilter==='snack'?'active':'')+'" onclick="setQuickFilter(\'snack\')">Snack</span>' +
+      '<span class="qpill '+(quickMealFilter==='instant'?'active':'')+'" onclick="setQuickFilter(\'instant\')">Instant</span>' +
+    '</div>';
+  if (quickMeals.length===0) {
+    html += '<div class="empty"><p>No quick meals yet</p><p style="font-size:14px;margin-top:8px">Tag a recipe or pantry item (like pot pies, frozen meals) as a quick meal</p></div>';
+  } else {
+    for (var i=0;i<quickMeals.length;i++) {
+      var r = quickMeals[i];
+      if (r.source_type === 'pantry') {
+        // Pantry item (no recipe - just heat and eat)
+        html += '<div class="list-item">' +
+          '<div class="list-item-content">' +
+            '<div class="list-item-title">'+esc(r.title)+' <span class="tag">'+esc(r.quick_meal_type)+'</span></div>' +
+            '<div class="list-item-sub">'+esc(r.quantity||'')+' '+esc(r.unit||'')+(r.location?' &middot; '+esc(r.location):'')+'</div>' +
+          '</div>' +
+          '<div class="edit-pantry-item">' +
+            '<button class="btn btn-sm btn-secondary" onclick="editPantryItem('+r.id+')">'+icons.edit+'</button>' +
+          '</div>' +
+        '</div>';
+      } else {
+        // Recipe
+        var total = (r.prep_time||0)+(r.cook_time||0);
+        html += '<a onclick="viewRecipe('+r.id+')" style="text-decoration:none;color:inherit;cursor:pointer">' +
+          '<div class="list-item"><div class="list-item-content">' +
+            '<div class="list-item-title">'+esc(r.title)+' <span class="tag">'+esc(r.quick_meal_type)+'</span></div>' +
+            '<div class="list-item-sub">'+icons.clock+' '+total+' min'+(total<=30?' &middot; Quick!':'')+'</div>' +
+          '</div></div></a>';
+      }
+    }
+  }
+  el.innerHTML = html;
+}
+
+async function setQuickFilter(type) {
+  quickMealFilter = type;
+  await loadQuickMeals(type);
+  renderPage();
+}
+
+// ── Meal Plans ───────────────────────────────────────────────
+var mealPlans = [];
+var currentPlan = null;
+var shoppingList = [];
+var DAYS = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
+var MEAL_TYPES = ['breakfast','lunch','dinner','snack','instant'];
+
+async function loadMealPlans() { mealPlans = await api('/api/meal-plans'); }
+
+function renderMealPlans(el) {
+  if (currentPlan) { renderPlanDetail(el); return; }
+  var html = '<div class="page-header"><h1>Meal Plans</h1>' +
+    '<button class="btn btn-sm btn-primary" onclick="showNewPlanModal()">'+icons.plus+' New Plan</button></div>';
+  if (mealPlans.length===0) {
+    html += '<div class="empty"><p>No meal plans yet</p><p style="font-size:14px;margin-top:8px">Create a plan to organize your week</p></div>';
+  } else {
+    for (var i=0;i<mealPlans.length;i++) {
+      var p = mealPlans[i];
+      html += '<div class="list-item" onclick="openPlan('+p.id+')" style="cursor:pointer"><div class="list-item-content">' +
+        '<div class="list-item-title">'+esc(p.name)+'</div>' +
+        '<div class="list-item-sub">Starts '+esc(p.start_date)+' &middot; '+p.entries.length+' meals</div>' +
+      '</div>' +
+      '<button class="btn btn-sm btn-secondary" onclick="event.stopPropagation();deletePlan('+p.id+')">'+icons.trash+'</button></div>';
+    }
+  }
+  el.innerHTML = html;
+}
+
+function showNewPlanModal() {
+  var today = new Date().toISOString().split('T')[0];
+  var overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.onclick = function(e){if(e.target===overlay)overlay.remove();};
+  overlay.innerHTML = '<div class="modal-sheet">' +
+    '<button class="modal-close" onclick="this.closest(\'.modal-overlay\').remove()">&times;</button>' +
+    '<h2>New Meal Plan</h2>' +
+    '<div class="form-group"><label>Name</label><input id="mp-name" placeholder="e.g. Week of March 30"/></div>' +
+    '<div class="form-group"><label>Start Date</label><input type="date" id="mp-date" value="'+today+'"/></div>' +
+    '<button class="btn btn-primary btn-full" onclick="createPlan()">Create Plan</button></div>';
+  document.body.appendChild(overlay);
+}
+
+async function createPlan() {
+  var name = document.getElementById('mp-name').value.trim();
+  var date = document.getElementById('mp-date').value;
+  if (!name) { showToast('Name is required'); return; }
+  try {
+    await api('/api/meal-plans', {method:'POST', body:JSON.stringify({name:name, start_date:date})});
+    closeModal(); showToast('Plan created!');
+    await loadMealPlans(); renderPage();
+  } catch(e) { showToast('Error'); }
+}
+
+async function openPlan(id) {
+  try { currentPlan = await api('/api/meal-plans/'+id); renderPage(); } catch(e) { showToast('Error'); }
+}
+
+async function deletePlan(id) {
+  if (!confirm('Delete this meal plan?')) return;
+  try { await api('/api/meal-plans/'+id,{method:'DELETE'}); showToast('Deleted'); await loadMealPlans(); renderPage(); } catch(e) { showToast('Error'); }
+}
+
+function renderPlanDetail(el) {
+  var p = currentPlan;
+  var html = '<div class="page-header">' +
+    '<button class="btn btn-sm btn-secondary" onclick="currentPlan=null;renderPage()">'+icons.back+' Back</button>' +
+    '<button class="btn btn-sm btn-success" onclick="generateShoppingList('+p.id+')">Shopping List</button></div>' +
+    '<h2 style="margin-bottom:4px">'+esc(p.name)+'</h2>' +
+    '<p style="color:var(--text-light);margin-bottom:16px;font-size:14px">Starting '+esc(p.start_date)+'</p>';
+
+  for (var d=0;d<7;d++) {
+    var dayEntries = p.entries.filter(function(e){return e.day_of_week===d;});
+    html += '<div style="margin-bottom:16px"><h3 style="color:var(--primary-dark);font-size:15px;font-weight:700;margin-bottom:8px">'+DAYS[d]+'</h3>';
+    if (dayEntries.length===0) {
+      html += '<p style="font-size:13px;color:var(--text-light);padding-left:8px">No meals planned</p>';
+    } else {
+      dayEntries.sort(function(a,b){return MEAL_TYPES.indexOf(a.meal_type)-MEAL_TYPES.indexOf(b.meal_type);});
+      for (var i=0;i<dayEntries.length;i++) {
+        var e = dayEntries[i];
+        html += '<div class="list-item" style="margin-left:8px"><div class="list-item-content">' +
+          '<div class="list-item-sub">'+esc(e.meal_type)+'</div>' +
+          '<div class="list-item-title">'+esc(e.recipe_title)+'</div>' +
+        '</div><button class="btn btn-sm btn-secondary" onclick="removePlanEntry('+p.id+','+e.id+')">'+icons.trash+'</button></div>';
+      }
+    }
+    html += '<button class="btn btn-sm btn-secondary" onclick="showAddEntryModal('+p.id+','+d+')" style="margin-left:8px;margin-top:4px">+ Add</button></div>';
+  }
+  el.innerHTML = html;
+}
+
+function showAddEntryModal(planId, day) {
+  var overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.onclick = function(e){if(e.target===overlay)overlay.remove();};
+  var recipeOpts = recipes.map(function(r){return '<option value="'+r.id+'">'+esc(r.title)+'</option>';}).join('');
+  var mealOpts = MEAL_TYPES.map(function(t){return '<option value="'+t+'">'+t.charAt(0).toUpperCase()+t.slice(1)+'</option>';}).join('');
+  overlay.innerHTML = '<div class="modal-sheet">' +
+    '<button class="modal-close" onclick="this.closest(\'.modal-overlay\').remove()">&times;</button>' +
+    '<h2>Add Meal - '+DAYS[day]+'</h2>' +
+    '<div class="form-group"><label>Recipe</label><select id="ae-recipe">'+recipeOpts+'</select></div>' +
+    '<div class="form-group"><label>Meal Type</label><select id="ae-type">'+mealOpts+'</select></div>' +
+    '<button class="btn btn-primary btn-full" onclick="addPlanEntry('+planId+','+day+')">Add</button></div>';
+  document.body.appendChild(overlay);
+}
+
+async function addPlanEntry(planId, day) {
+  var recipeId = parseInt(document.getElementById('ae-recipe').value);
+  var mealType = document.getElementById('ae-type').value;
+  try {
+    await api('/api/meal-plans/'+planId+'/entries', {method:'POST', body:JSON.stringify({recipe_id:recipeId, day_of_week:day, meal_type:mealType})});
+    closeModal(); currentPlan = await api('/api/meal-plans/'+planId); renderPage(); showToast('Added!');
+  } catch(e) { showToast('Error'); }
+}
+
+async function removePlanEntry(planId, entryId) {
+  try {
+    await api('/api/meal-plans/'+planId+'/entries/'+entryId, {method:'DELETE'});
+    currentPlan = await api('/api/meal-plans/'+planId); renderPage();
+  } catch(e) { showToast('Error'); }
+}
+
+async function generateShoppingList(planId) {
+  showToast('Generating shopping list...');
+  try {
+    shoppingList = await api('/api/meal-plans/'+planId+'/shopping-list', {method:'POST'});
+    showShoppingListModal(planId);
+  } catch(e) { showToast('Error generating list'); }
+}
+
+function showShoppingListModal(planId) {
+  var overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.onclick = function(e){if(e.target===overlay)overlay.remove();};
+  var html = '<div class="modal-sheet"><button class="modal-close" onclick="this.closest(\'.modal-overlay\').remove()">&times;</button>' +
+    '<h2>Shopping List</h2>';
+  if (shoppingList.length===0) {
+    html += '<div class="empty"><p>You have everything you need!</p></div>';
+  } else {
+    var groups = {};
+    for (var i=0;i<shoppingList.length;i++) { var s=shoppingList[i]; var c=s.category||'other'; if(!groups[c])groups[c]=[]; groups[c].push(s); }
+    var cats = Object.keys(groups).sort();
+    for (var c=0;c<cats.length;c++) {
+      html += '<h3 style="font-size:14px;text-transform:uppercase;color:var(--text-light);margin:12px 0 6px">'+esc(cats[c])+'</h3>';
+      for (var i=0;i<groups[cats[c]].length;i++) {
+        var item = groups[cats[c]][i];
+        html += '<div class="list-item" onclick="toggleShopItem('+item.id+',this)" style="cursor:pointer">' +
+          '<div style="width:22px;height:22px;border-radius:6px;border:2px solid '+(item.checked?'var(--success)':'var(--border)')+';background:'+(item.checked?'var(--success)':'transparent')+';margin-right:12px;flex-shrink:0;display:flex;align-items:center;justify-content:center;color:white;font-size:14px">'+(item.checked?'&#10003;':'')+'</div>' +
+          '<div class="list-item-content">' +
+            '<div class="list-item-title" style="'+(item.checked?'text-decoration:line-through;color:var(--text-light)':'')+'">'+esc(item.name)+'</div>' +
+            '<div class="list-item-sub">'+(item.quantity?esc(item.quantity)+' '+esc(item.unit):esc(item.unit))+'</div>' +
+          '</div></div>';
+      }
+    }
+  }
+  html += '</div>';
+  overlay.innerHTML = html;
+  document.body.appendChild(overlay);
+}
+
+async function toggleShopItem(id, el) {
+  try {
+    var res = await api('/api/shopping-list/'+id+'/toggle', {method:'PUT'});
+    // Update local state
+    for (var i=0;i<shoppingList.length;i++) if (shoppingList[i].id===id) shoppingList[i].checked=res.checked;
+    // Re-render the modal
+    closeModal();
+    showShoppingListModal(null);
+  } catch(e) { showToast('Error'); }
+}
+
+// ── Chef AI Chat ─────────────────────────────────────────────
+var chatHistory = [];
+var chatLoading = false;
+
+function renderChat(el) {
+  var msgsHtml = '';
+  if (chatHistory.length === 0) {
+    msgsHtml = '<div class="empty" style="padding:20px"><p style="font-size:16px">Hi! I\'m your cooking assistant.</p>' +
+      '<p style="font-size:14px;margin-top:8px;color:var(--text-light)">Ask me things like:</p>' +
+      '<div style="text-align:left;max-width:300px;margin:12px auto">' +
+        '<p style="font-size:14px;color:var(--primary);margin:4px 0">"What can I make for dinner tonight?"</p>' +
+        '<p style="font-size:14px;color:var(--primary);margin:4px 0">"Give me a recipe using chicken and rice"</p>' +
+        '<p style="font-size:14px;color:var(--primary);margin:4px 0">"What\'s a good side dish for meatloaf?"</p>' +
+        '<p style="font-size:14px;color:var(--primary);margin:4px 0">"Find me a new crockpot recipe"</p>' +
+      '</div>' +
+      '<button class="btn btn-secondary" onclick="aiCategorize()" style="margin-top:12px">Auto-categorize all recipes by meal type</button>' +
+    '</div>';
+  } else {
+    for (var i=0;i<chatHistory.length;i++) {
+      var m = chatHistory[i];
+      var cls = m.role === 'user' ? 'user' : 'ai';
+      var content = esc(m.content);
+      // Clean up JSON blocks from display
+      content = content.replace(/```json[\s\S]*?```/g, '<em>[Recipe data]</em>');
+      msgsHtml += '<div class="chat-msg '+cls+'">'+content;
+      if (m.saved_recipe) msgsHtml += '<br/><span class="saved-tag">Saved: '+esc(m.saved_recipe.title)+'</span>';
+      msgsHtml += '</div>';
+    }
+  }
+
+  el.innerHTML = '<div class="page-header"><h1>Chef AI</h1></div>' +
+    '<div class="chat-messages" id="chat-messages">'+msgsHtml+'</div>' +
+    (chatLoading ? '<div style="color:var(--text-light);font-size:14px;font-style:italic;padding:8px">Thinking...</div>' : '') +
+    '<div class="chat-input-area">' +
+      '<input id="chat-input" placeholder="Ask me anything about cooking..." onkeydown="if(event.key===\'Enter\')sendChat()"/>' +
+      '<button class="btn btn-primary" onclick="sendChat()" '+(chatLoading?'disabled':'')+'>Send</button>' +
+    '</div>';
+
+  // Scroll to bottom
+  var msgs = document.getElementById('chat-messages');
+  if (msgs) msgs.scrollTop = msgs.scrollHeight;
+  // Focus input
+  var inp = document.getElementById('chat-input');
+  if (inp && !chatLoading) inp.focus();
+}
+
+async function sendChat() {
+  var input = document.getElementById('chat-input');
+  var msg = (input?input.value:'').trim();
+  if (!msg || chatLoading) return;
+
+  chatHistory.push({role:'user', content:msg});
+  chatLoading = true;
+  renderPage();
+
+  try {
+    var res = await api('/api/ai/chat', {
+      method: 'POST',
+      body: JSON.stringify({message: msg, history: chatHistory.slice(-10)}),
+    });
+    var aiMsg = {role:'assistant', content:res.reply};
+    if (res.saved_recipe) aiMsg.saved_recipe = res.saved_recipe;
+    chatHistory.push(aiMsg);
+    // Reload recipes if one was saved
+    if (res.saved_recipe) await loadRecipes();
+  } catch(e) {
+    chatHistory.push({role:'assistant', content:'Sorry, I had an error: '+(e.message||'Unknown error')});
+  }
+  chatLoading = false;
+  renderPage();
+}
+
+async function aiCategorize() {
+  showToast('Categorizing recipes...');
+  try {
+    var res = await api('/api/ai/categorize-recipes', {method:'POST'});
+    showToast(res.message);
+    await loadRecipes();
+  } catch(e) { showToast('Error: '+(e.message||'Failed')); }
+}
+
+// ── Helpers ──────────────────────────────────────────────────
+function closeModal() { var m = document.querySelector('.modal-overlay'); if (m) m.remove(); }
+
+// ── Init ─────────────────────────────────────────────────────
+async function init() {
+  render();
+  try { await Promise.all([loadRecipes(), loadPantry(), loadExclusions()]); renderPage(); } catch(e) { console.error(e); }
+}
+init();
+</script>
+</body>
+</html>

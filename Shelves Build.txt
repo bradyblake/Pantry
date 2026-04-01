@@ -1,0 +1,441 @@
+#Author: Claude (generated for Brady's pantry project)
+#Description: Pantry Pull-Out Shelf Frame - Fusion 360 Python Script
+#
+# HOW TO USE:
+# 1. Open Fusion 360
+# 2. Go to Tools > Add-Ins > Scripts and Add-Ins (or press Shift+S)
+# 3. Click the green "+" next to "My Scripts"
+# 4. Create a new script, name it "PantryFrame"
+# 5. Replace the generated code with this file's contents
+# 6. Click "Run"
+#
+# The script will generate the complete steel frame, shelves, and spice tower.
+# All dimensions are parametric - edit the CONFIGURATION section to adjust.
+
+import adsk.core, adsk.fusion, traceback
+
+def run(context):
+    ui = None
+    try:
+        app = adsk.core.Application.get()
+        ui = app.userInterface
+        design = app.activeProduct
+        rootComp = design.rootComponent
+        
+        # ============================================
+        # CONFIGURATION - All dimensions in centimeters
+        # Edit these values to adjust the design
+        # ============================================
+        
+        def inch(inches):
+            """Convert inches to centimeters for Fusion 360"""
+            return inches * 2.54
+        
+        # Overall dimensions
+        TOTAL_WIDTH = inch(35)          # 35" alcove width
+        TOTAL_DEPTH = inch(36)          # 36" depth (pull direction)
+        TOTAL_HEIGHT = inch(93)         # 93" floor to ceiling
+        
+        # Ice maker cutout
+        ICE_MAKER_WIDTH = inch(16)      # 16" wide
+        ICE_MAKER_HEIGHT = inch(34)     # 34" tall
+        ICE_MAKER_DEPTH = inch(34)      # 34" deep
+        
+        # Column widths (clear openings for shelves)
+        LEFT_COLUMN_WIDTH = inch(11.5)  # Left pull-out shelves
+        SPICE_TOWER_WIDTH = inch(5)     # Center spice tower
+        UPPER_RIGHT_WIDTH = inch(21)    # Upper right shelves (above ice maker)
+        
+        # Steel square tube
+        TUBE_SIZE = inch(1.5)           # 1.5" x 1.5" tube
+        TUBE_WALL = inch(0.065)         # 16 gauge wall
+        
+        # Flat bar for shelf spine tabs
+        FLAT_BAR_WIDTH = inch(1)
+        FLAT_BAR_THICKNESS = inch(0.125)
+        TAB_LENGTH = inch(2.5)
+        
+        # Lumber dimensions
+        SHELF_THICKNESS = inch(1.5)     # 2x12 actual thickness
+        SHELF_BOARD_WIDTH = inch(11.25) # 2x12 actual width
+        RIPPED_BOARD_WIDTH = inch(9.75) # Ripped width for 21" shelves
+        
+        # Shelf level heights (bottom of stretcher, from floor)
+        LEFT_LEVELS = [inch(2), inch(12), inch(23), inch(34), inch(45)]
+        UPPER_RIGHT_LEVELS = [inch(45), inch(56), inch(67), inch(78)]
+        OPEN_SHELF_HEIGHT = inch(80)
+        
+        # Slide dimensions (for reference/clearance)
+        SLIDE_LENGTH = inch(24)
+        SLIDE_WIDTH = inch(1.75)
+        
+        # ============================================
+        # VERTICAL POST POSITIONS (X-axis, from left)
+        # ============================================
+        
+        V1_X = 0                                                    # Left outer
+        V2_X = LEFT_COLUMN_WIDTH + TUBE_SIZE                       # Left inner / Spice left
+        V3_X = V2_X + SPICE_TOWER_WIDTH + TUBE_SIZE                # Spice right / Upper right left
+        V4_X = TOTAL_WIDTH - TUBE_SIZE                             # Right outer
+        
+        # ============================================
+        # HELPER FUNCTION: Create solid box
+        # ============================================
+        
+        def create_box(comp, name, width, depth, height, x, y, z, color=None):
+            """Create a solid box body"""
+            sketches = comp.sketches
+            xyPlane = comp.xYConstructionPlane
+            sketch = sketches.add(xyPlane)
+            
+            # Draw rectangle
+            lines = sketch.sketchCurves.sketchLines
+            lines.addTwoPointRectangle(
+                adsk.core.Point3D.create(x, y, 0),
+                adsk.core.Point3D.create(x + width, y + depth, 0)
+            )
+            
+            prof = sketch.profiles.item(0)
+            
+            # Extrude
+            extrudes = comp.features.extrudeFeatures
+            extInput = extrudes.createInput(prof, adsk.fusion.FeatureOperations.NewBodyFeatureOperation)
+            
+            # Start from z height
+            startOffset = adsk.fusion.OffsetStartDefinition.create(adsk.core.ValueInput.createByReal(z))
+            extInput.startExtent = startOffset
+            
+            distance = adsk.core.ValueInput.createByReal(height)
+            extInput.setDistanceExtent(False, distance)
+            ext = extrudes.add(extInput)
+            
+            if ext.bodies.count > 0:
+                body = ext.bodies.item(0)
+                body.name = name
+                return body
+            return None
+        
+        def create_hole(comp, body, diameter, x, y, z, depth, direction='z'):
+            """Create a drill hole in a body"""
+            sketches = comp.sketches
+            
+            if direction == 'z':
+                plane = comp.xYConstructionPlane
+                sketch = sketches.add(plane)
+                circles = sketch.sketchCurves.sketchCircles
+                circles.addByCenterRadius(adsk.core.Point3D.create(x, y, 0), diameter/2)
+            elif direction == 'y':
+                plane = comp.xZConstructionPlane
+                sketch = sketches.add(plane)
+                circles = sketch.sketchCurves.sketchCircles
+                circles.addByCenterRadius(adsk.core.Point3D.create(x, z, 0), diameter/2)
+            else:  # x direction
+                plane = comp.yZConstructionPlane
+                sketch = sketches.add(plane)
+                circles = sketch.sketchCurves.sketchCircles
+                circles.addByCenterRadius(adsk.core.Point3D.create(y, z, 0), diameter/2)
+            
+            prof = sketch.profiles.item(0)
+            
+            extrudes = comp.features.extrudeFeatures
+            extInput = extrudes.createInput(prof, adsk.fusion.FeatureOperations.CutFeatureOperation)
+            distance = adsk.core.ValueInput.createByReal(depth)
+            extInput.setDistanceExtent(False, distance)
+            
+            return extrudes.add(extInput)
+        
+        # ============================================
+        # CREATE COMPONENT STRUCTURE
+        # ============================================
+        
+        # Frame component
+        frameOcc = rootComp.occurrences.addNewComponent(adsk.core.Matrix3D.create())
+        frameComp = frameOcc.component
+        frameComp.name = "Steel_Frame"
+        
+        # Verticals sub-component
+        vertOcc = frameComp.occurrences.addNewComponent(adsk.core.Matrix3D.create())
+        vertComp = vertOcc.component
+        vertComp.name = "Verticals"
+        
+        # Stretchers sub-component
+        strOcc = frameComp.occurrences.addNewComponent(adsk.core.Matrix3D.create())
+        strComp = strOcc.component
+        strComp.name = "Stretchers"
+        
+        # Cross braces sub-component
+        braceOcc = frameComp.occurrences.addNewComponent(adsk.core.Matrix3D.create())
+        braceComp = braceOcc.component
+        braceComp.name = "Cross_Braces"
+        
+        # Shelves component
+        shelfOcc = rootComp.occurrences.addNewComponent(adsk.core.Matrix3D.create())
+        shelfComp = shelfOcc.component
+        shelfComp.name = "Shelves"
+        
+        # Shelf spines sub-component
+        spineOcc = shelfComp.occurrences.addNewComponent(adsk.core.Matrix3D.create())
+        spineComp = spineOcc.component
+        spineComp.name = "Shelf_Spines"
+        
+        # Spice tower component
+        spiceOcc = rootComp.occurrences.addNewComponent(adsk.core.Matrix3D.create())
+        spiceComp = spiceOcc.component
+        spiceComp.name = "Spice_Tower"
+        
+        # Ice maker placeholder
+        iceOcc = rootComp.occurrences.addNewComponent(adsk.core.Matrix3D.create())
+        iceComp = iceOcc.component
+        iceComp.name = "Ice_Maker_Placeholder"
+        
+        # ============================================
+        # CREATE VERTICALS (8 posts - front and back pairs)
+        # ============================================
+        
+        verticals = [
+            # (name, x, y, height)
+            # Front verticals (y = 0)
+            ("Vert_V1_Front", V1_X, 0, TOTAL_HEIGHT),
+            ("Vert_V2_Front", V2_X, 0, TOTAL_HEIGHT),
+            ("Vert_V3_Front", V3_X, 0, TOTAL_HEIGHT),
+            ("Vert_V4_Front", V4_X, 0, TOTAL_HEIGHT),
+            # Back verticals (y = depth - tube)
+            ("Vert_V1_Back", V1_X, TOTAL_DEPTH - TUBE_SIZE, TOTAL_HEIGHT),
+            ("Vert_V2_Back", V2_X, TOTAL_DEPTH - TUBE_SIZE, TOTAL_HEIGHT),
+            ("Vert_V3_Back", V3_X, TOTAL_DEPTH - TUBE_SIZE, TOTAL_HEIGHT),
+            ("Vert_V4_Back", V4_X, TOTAL_DEPTH - TUBE_SIZE, TOTAL_HEIGHT),
+        ]
+        
+        for name, x, y, height in verticals:
+            create_box(vertComp, name, TUBE_SIZE, TUBE_SIZE, height, x, y, 0)
+        
+        # ============================================
+        # CREATE STRETCHERS (run front-to-back, oriented vertically for side-mount slides)
+        # ============================================
+        
+        stretcher_length = TOTAL_DEPTH - (2 * TUBE_SIZE)
+        
+        stretchers = []
+        
+        # Left column stretchers (both sides of each shelf bay)
+        for h in LEFT_LEVELS:
+            stretchers.append((f"Str_Left_L_{int(h/2.54)}in", V1_X + TUBE_SIZE, TUBE_SIZE, h))
+            stretchers.append((f"Str_Left_R_{int(h/2.54)}in", V2_X - TUBE_SIZE, TUBE_SIZE, h))
+        
+        # Spice tower stretchers (top and bottom only)
+        stretchers.append(("Str_Spice_L_Bottom", V2_X + TUBE_SIZE, TUBE_SIZE, inch(2)))
+        stretchers.append(("Str_Spice_R_Bottom", V3_X - TUBE_SIZE, TUBE_SIZE, inch(2)))
+        stretchers.append(("Str_Spice_L_Top", V2_X + TUBE_SIZE, TUBE_SIZE, inch(34)))
+        stretchers.append(("Str_Spice_R_Top", V3_X - TUBE_SIZE, TUBE_SIZE, inch(34)))
+        
+        # Upper right stretchers (above ice maker)
+        for h in UPPER_RIGHT_LEVELS:
+            stretchers.append((f"Str_UpperR_L_{int(h/2.54)}in", V3_X + TUBE_SIZE, TUBE_SIZE, h))
+            stretchers.append((f"Str_UpperR_R_{int(h/2.54)}in", V4_X - TUBE_SIZE, TUBE_SIZE, h))
+        
+        for name, x, y, z in stretchers:
+            # Stretchers oriented with 1.5" vertical face for side-mount slides
+            create_box(strComp, name, TUBE_SIZE, stretcher_length, TUBE_SIZE, x, y, z)
+        
+        # ============================================
+        # CREATE CROSS BRACES (run left-to-right)
+        # ============================================
+        
+        cross_braces = [
+            # Bottom (full width)
+            ("Brace_Bottom_Front", 0, 0, 0, TOTAL_WIDTH),
+            ("Brace_Bottom_Back", 0, TOTAL_DEPTH - TUBE_SIZE, 0, TOTAL_WIDTH),
+            # Top (full width)  
+            ("Brace_Top_Front", 0, 0, TOTAL_HEIGHT - TUBE_SIZE, TOTAL_WIDTH),
+            ("Brace_Top_Back", 0, TOTAL_DEPTH - TUBE_SIZE, TOTAL_HEIGHT - TUBE_SIZE, TOTAL_WIDTH),
+            # Mid-height at ice maker top (full width)
+            ("Brace_Mid_Front", 0, 0, ICE_MAKER_HEIGHT, TOTAL_WIDTH),
+            ("Brace_Mid_Back", 0, TOTAL_DEPTH - TUBE_SIZE, ICE_MAKER_HEIGHT, TOTAL_WIDTH),
+            # Open shelf support
+            ("Brace_OpenShelf_Front", 0, 0, OPEN_SHELF_HEIGHT, TOTAL_WIDTH),
+            ("Brace_OpenShelf_Back", 0, TOTAL_DEPTH - TUBE_SIZE, OPEN_SHELF_HEIGHT, TOTAL_WIDTH),
+        ]
+        
+        for name, x, y, z, width in cross_braces:
+            create_box(braceComp, name, width, TUBE_SIZE, TUBE_SIZE, x, y, z)
+        
+        # ============================================
+        # CREATE SHELVES
+        # ============================================
+        
+        # Gap for slides and clearance
+        shelf_gap = inch(0.25)
+        slide_clearance = inch(2)  # Space for slide hardware
+        
+        # Left column shelves (11.25" wide x 36" deep)
+        for i, h in enumerate(LEFT_LEVELS):
+            shelf_z = h + TUBE_SIZE + shelf_gap
+            shelf_x = V1_X + TUBE_SIZE + slide_clearance
+            shelf_width = LEFT_COLUMN_WIDTH - (2 * slide_clearance)
+            
+            create_box(
+                shelfComp,
+                f"Shelf_Left_{i+1}",
+                shelf_width,
+                TOTAL_DEPTH - TUBE_SIZE - inch(1),
+                SHELF_THICKNESS,
+                shelf_x,
+                TUBE_SIZE,
+                shelf_z
+            )
+        
+        # Upper right shelves (21" wide, built-up)
+        for i, h in enumerate(UPPER_RIGHT_LEVELS):
+            shelf_z = h + TUBE_SIZE + shelf_gap
+            shelf_x = V3_X + TUBE_SIZE + slide_clearance
+            shelf_width = UPPER_RIGHT_WIDTH - (2 * slide_clearance)
+            
+            create_box(
+                shelfComp,
+                f"Shelf_Upper_{i+1}",
+                shelf_width,
+                TOTAL_DEPTH - TUBE_SIZE - inch(1),
+                SHELF_THICKNESS,
+                shelf_x,
+                TUBE_SIZE,
+                shelf_z
+            )
+        
+        # ============================================
+        # CREATE SHELF SPINES (for 21" built-up shelves)
+        # ============================================
+        
+        for i, h in enumerate(UPPER_RIGHT_LEVELS):
+            spine_z = h + TUBE_SIZE + shelf_gap
+            spine_x = V3_X + TUBE_SIZE + slide_clearance + RIPPED_BOARD_WIDTH
+            
+            # Spine tube
+            create_box(
+                spineComp,
+                f"Spine_Upper_{i+1}",
+                TUBE_SIZE,
+                TOTAL_DEPTH - TUBE_SIZE - inch(2),
+                TUBE_SIZE,
+                spine_x,
+                TUBE_SIZE + inch(0.5),
+                spine_z
+            )
+            
+            # Tabs (5 per spine)
+            tab_spacing = (TOTAL_DEPTH - TUBE_SIZE - inch(4)) / 4
+            for t in range(5):
+                tab_y = TUBE_SIZE + inch(1) + (t * tab_spacing)
+                create_box(
+                    spineComp,
+                    f"Tab_Upper_{i+1}_{t+1}",
+                    TAB_LENGTH,
+                    FLAT_BAR_WIDTH,
+                    FLAT_BAR_THICKNESS,
+                    spine_x - (TAB_LENGTH - TUBE_SIZE) / 2,
+                    tab_y,
+                    spine_z + TUBE_SIZE
+                )
+        
+        # ============================================
+        # CREATE SPICE TOWER
+        # ============================================
+        
+        spice_x = V2_X + TUBE_SIZE + shelf_gap
+        spice_internal_width = SPICE_TOWER_WIDTH - (2 * shelf_gap) - inch(1.5)  # Account for plywood walls
+        spice_depth = TOTAL_DEPTH - (2 * TUBE_SIZE) - inch(2)
+        spice_height = ICE_MAKER_HEIGHT - TUBE_SIZE - inch(2)
+        plywood_thickness = inch(0.75)
+        
+        # Left side panel
+        create_box(spiceComp, "Spice_Left_Panel", plywood_thickness, spice_depth, spice_height, 
+                   spice_x, TUBE_SIZE + inch(1), TUBE_SIZE + inch(1))
+        
+        # Right side panel
+        create_box(spiceComp, "Spice_Right_Panel", plywood_thickness, spice_depth, spice_height,
+                   spice_x + spice_internal_width + plywood_thickness, TUBE_SIZE + inch(1), TUBE_SIZE + inch(1))
+        
+        # Back panel
+        create_box(spiceComp, "Spice_Back_Panel", spice_internal_width, plywood_thickness, spice_height,
+                   spice_x + plywood_thickness, TOTAL_DEPTH - TUBE_SIZE - inch(1) - plywood_thickness, TUBE_SIZE + inch(1))
+        
+        # Bottom panel
+        create_box(spiceComp, "Spice_Bottom_Panel", spice_internal_width, spice_depth - plywood_thickness, plywood_thickness,
+                   spice_x + plywood_thickness, TUBE_SIZE + inch(1), TUBE_SIZE + inch(1))
+        
+        # Internal shelves (4 levels)
+        internal_shelf_spacing = (spice_height - plywood_thickness) / 5
+        for i in range(4):
+            shelf_z = TUBE_SIZE + inch(1) + plywood_thickness + ((i + 1) * internal_shelf_spacing)
+            create_box(spiceComp, f"Spice_Shelf_{i+1}", spice_internal_width, spice_depth - plywood_thickness - inch(1), plywood_thickness,
+                       spice_x + plywood_thickness, TUBE_SIZE + inch(1), shelf_z)
+        
+        # ============================================
+        # CREATE ICE MAKER PLACEHOLDER
+        # ============================================
+        
+        create_box(
+            iceComp,
+            "Ice_Maker_Box",
+            ICE_MAKER_WIDTH - inch(2),
+            ICE_MAKER_DEPTH - inch(2),
+            ICE_MAKER_HEIGHT - inch(2),
+            V3_X + TUBE_SIZE + inch(1),
+            inch(1),
+            inch(1)
+        )
+        
+        # ============================================
+        # CREATE OPEN TOP SHELF
+        # ============================================
+        
+        create_box(
+            shelfComp,
+            "Open_Shelf_Top",
+            TOTAL_WIDTH - (2 * TUBE_SIZE) - inch(1),
+            TOTAL_DEPTH - (2 * TUBE_SIZE) - inch(1),
+            SHELF_THICKNESS,
+            TUBE_SIZE + inch(0.5),
+            TUBE_SIZE + inch(0.5),
+            OPEN_SHELF_HEIGHT + TUBE_SIZE + shelf_gap
+        )
+        
+        # ============================================
+        # SUMMARY MESSAGE
+        # ============================================
+        
+        summary = """Pantry Frame Model Created Successfully!
+
+COMPONENTS:
+├── Steel_Frame
+│   ├── Verticals (8 posts)
+│   ├── Stretchers ({} pieces)
+│   └── Cross_Braces (8 pieces)
+├── Shelves
+│   ├── Left Column (5 shelves)
+│   ├── Upper Right (4 shelves)
+│   ├── Open Top Shelf (1)
+│   └── Shelf_Spines (4 spines + 20 tabs)
+├── Spice_Tower (box + 4 internal shelves)
+└── Ice_Maker_Placeholder
+
+DIMENSIONS:
+- Overall: 35" W × 36" D × 93" H
+- Steel: 1.5" square tube, 16ga
+- Shelves: 1.5" thick (2×12 lumber)
+
+NOTES:
+- Stretchers oriented vertically for side-mount slides
+- 24" slide extension, 12" remains inside at full pull
+- Wall anchor points on rear verticals
+- All cuts are 90° square
+
+Use View > Section Analysis to see internal structure.""".format(len(stretchers))
+        
+        ui.messageBox(summary)
+        
+    except:
+        if ui:
+            ui.messageBox('Failed:\n{}'.format(traceback.format_exc()))
+
+def stop(context):
+    pass
