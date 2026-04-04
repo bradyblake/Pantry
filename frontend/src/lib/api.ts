@@ -247,6 +247,12 @@ export const recipesApi = {
 		);
 	},
 
+	importFromUrl: (url: string) =>
+		fetchApi<Recipe[]>('/api/recipes/import-url', {
+			method: 'POST',
+			body: JSON.stringify({ url })
+		}),
+
 	// Document/PDF operations
 	uploadDocument: async (file: File) => {
 		const formData = new FormData();

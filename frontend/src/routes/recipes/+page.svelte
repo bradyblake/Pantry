@@ -76,13 +76,19 @@
 <Header title="Recipes" showBack backHref="/" />
 
 <main class="flex-1 flex flex-col overflow-hidden p-4">
-	<div class="flex gap-3 mb-4 shrink-0">
-		<div class="flex-1">
-			<SearchBar placeholder="Search recipes..." on:search={(e) => handleSearch(e.detail)} />
+	<div class="flex flex-col gap-3 mb-4 shrink-0">
+		<SearchBar placeholder="Search recipes..." on:search={(e) => handleSearch(e.detail)} />
+		<div class="flex gap-3">
+			<a href="/recipes/add" class="flex-1 px-6 py-3 rounded-xl bg-green-500 text-white font-bold text-lg text-center whitespace-nowrap active:scale-95 transition-transform">
+				+ Add Recipe
+			</a>
+			<a href="/recipes/import-url" class="flex-1 px-6 py-3 rounded-xl bg-blue-500 text-white font-bold text-lg text-center whitespace-nowrap active:scale-95 transition-transform">
+				Import URL
+			</a>
+			<a href="/recipes/upload" class="flex-1 px-6 py-3 rounded-xl bg-purple-500 text-white font-bold text-lg text-center whitespace-nowrap active:scale-95 transition-transform">
+				Upload PDF
+			</a>
 		</div>
-		<a href="/recipes/upload" class="px-6 py-3 rounded-xl bg-purple-500 text-white font-bold text-lg whitespace-nowrap active:scale-95 transition-transform">
-			Upload PDF
-		</a>
 	</div>
 
 	{#if loading}
@@ -127,14 +133,9 @@
 
 			<!-- All Recipes -->
 			<section>
-				<div class="flex justify-between items-center mb-3">
-					<h2 class="text-xl font-bold text-gray-700">
-						{searchQuery ? 'Search Results' : 'All Recipes'}
-					</h2>
-					<a href="/recipes/add" class="px-4 py-2 rounded-xl bg-gray-200 text-gray-700 font-semibold active:scale-95 transition-transform">
-						+ Add
-					</a>
-				</div>
+				<h2 class="text-xl font-bold text-gray-700 mb-3">
+					{searchQuery ? 'Search Results' : 'All Recipes'}
+				</h2>
 
 				{#if recipes.length === 0}
 					<div class="text-center py-16">

@@ -1,6 +1,7 @@
 import os
 import json
 import base64
+import re
 import httpx
 from pathlib import Path
 from typing import Optional, List
@@ -46,6 +47,34 @@ If times or servings aren't specified, use null.
 For ingredients, extract the quantity and unit when possible.
 
 Return ONLY the JSON, no other text."""
+
+
+URL_RECIPE_PROMPT = """You are extracting a recipe from a webpage. The content below was scraped from a URL (possibly TikTok, Instagram, YouTube, a recipe blog, or other website).
+
+Extract the recipe and return ONLY valid JSON with this structure:
+{
+  "name": "Recipe Name",
+  "description": "Brief description of the dish",
+  "prep_time_minutes": 15,
+  "cook_time_minutes": 30,
+  "servings": 4,
+  "ingredients": [
+    {"text": "1 lb ground beef", "quantity": 1, "unit": "lb", "item": "ground beef", "is_optional": false},
+    {"text": "1 packet taco seasoning", "quantity": 1, "unit": "packet", "item": "taco seasoning", "is_optional": false}
+  ],
+  "instructions": "Step-by-step instructions as a single string with numbered steps",
+  "tags": ["mexican", "quick", "kid-friendly"]
+}
+
+If times or servings aren't specified, use null.
+For ingredients, extract the quantity and unit when possible.
+If the content describes multiple recipes, return an array of recipe objects.
+If you cannot find a recipe in the content, return {"error": "No recipe found in this page"}.
+
+Return ONLY the JSON, no other text.
+
+Webpage content:
+"""
 
 
 class RateLimitError(Exception):
@@ -134,6 +163,45 @@ class RecipeParser:
         except json.JSONDecodeError as e:
             return {"error": f"Failed to parse response as JSON: {e}", "raw_response": response_text}
 
+
+    @staticmethod
+    def _strip_html(html: str) -> str:
+        """Extract readable text from HTML content."""
+        html = re.sub(r'<script[^>]*>[\s\S]*?</script>', '', html, flags=re.IGNORECASE)
+        html = re.sub(r'<style[^>]*>[\s\S]*?</style>', '', html, flags=re.IGNORECASE)
+        html = re.sub(r'<(?:br|p|div|h[1-6]|li|tr)[^>]*/?>', '
+', html, flags=re.IGNORECASE)
+        html = re.sub(r'<[^>]+>', '', html)
+        html = html.replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>')
+        html = html.replace('&quot;', '"').replace("&#39;", "'").replace('&nbsp;', ' ')
+        lines = [line.strip() for line in html.splitlines()]
+        lines = [line for line in lines if line]
+        return '
+'.join(lines)
+
+    async def fetch_url_content(self, url: str) -> str:
+        """Fetch and extract text content from a URL."""
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+        }
+
+        async with httpx.AsyncClient(follow_redirects=True, timeout=30.0) as client:
+            response = await client.get(url, headers=headers)
+            response.raise_for_status()
+            html = response.text
+
+        text = self._strip_html(html)
+
+        max_chars = 15000
+        if len(text) > max_chars:
+            text = text[:max_chars] + "
+
+[Content truncated]"
+
+        return text
+
     # ==================== GEMINI ====================
 
     async def _gemini_request(self, payload: dict, api_key: str) -> dict:
@@ -169,6 +237,15 @@ class RecipeParser:
                     {"inline_data": {"mime_type": media_type, "data": image_b64}},
                     {"text": RECIPE_PROMPT}
                 ]
+            }]
+        }
+        return await self._gemini_request(payload, api_key)
+
+
+    async def _gemini_parse_url_text(self, text: str, api_key: str) -> dict:
+        payload = {
+            "contents": [{
+                "parts": [{"text": URL_RECIPE_PROMPT + text}]
             }]
         }
         return await self._gemini_request(payload, api_key)
@@ -216,6 +293,15 @@ class RecipeParser:
         }
         return await self._groq_request(payload, api_key)
 
+
+    async def _groq_parse_url_text(self, text: str, api_key: str) -> dict:
+        payload = {
+            "model": "llama-3.3-70b-versatile",
+            "messages": [{"role": "user", "content": URL_RECIPE_PROMPT + text}],
+            "max_tokens": 4096
+        }
+        return await self._groq_request(payload, api_key)
+
     # ==================== CLAUDE ====================
 
     async def _claude_parse_text(self, text: str, api_key: str) -> dict:
@@ -251,6 +337,24 @@ class RecipeParser:
                         {"type": "text", "text": RECIPE_PROMPT}
                     ]
                 }]
+            )
+        except anthropic.RateLimitError:
+            raise RateLimitError("Claude rate limit exceeded")
+        except anthropic.AuthenticationError:
+            raise RateLimitError("Claude auth error - invalid key")
+
+        return self._parse_json_response(message.content[0].text)
+
+
+    async def _claude_parse_url_text(self, text: str, api_key: str) -> dict:
+        import anthropic
+        client = anthropic.Anthropic(api_key=api_key)
+
+        try:
+            message = client.messages.create(
+                model="claude-sonnet-4-20250514",
+                max_tokens=4096,
+                messages=[{"role": "user", "content": URL_RECIPE_PROMPT + text}]
             )
         except anthropic.RateLimitError:
             raise RateLimitError("Claude rate limit exceeded")
@@ -327,6 +431,27 @@ class RecipeParser:
                     return await self._try_with_rotation(provider, self._groq_parse_image, image_data, media_type)
                 elif provider == "claude":
                     return await self._try_with_rotation(provider, self._claude_parse_image, image_data, media_type)
+            except Exception as e:
+                logger.warning(f"Provider {provider} failed, trying next: {e}")
+                last_error = e
+                continue
+
+        raise last_error or ValueError("No AI providers configured")
+
+
+    async def parse_recipe_from_url(self, url: str) -> dict:
+        """Fetch a URL and parse the recipe from its content."""
+        text = await self.fetch_url_content(url)
+        last_error = None
+
+        for provider in self.providers:
+            try:
+                if provider == "gemini":
+                    return await self._try_with_rotation(provider, self._gemini_parse_url_text, text)
+                elif provider == "groq":
+                    return await self._try_with_rotation(provider, self._groq_parse_url_text, text)
+                elif provider == "claude":
+                    return await self._try_with_rotation(provider, self._claude_parse_url_text, text)
             except Exception as e:
                 logger.warning(f"Provider {provider} failed, trying next: {e}")
                 last_error = e

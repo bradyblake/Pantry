@@ -10,6 +10,7 @@ import json
 import os
 
 from database import get_db
+from pydantic import BaseModel as PydanticBaseModel
 from models.recipe import (
     Recipe, RecipeCreate, RecipeUpdate, RecipeResponse,
     RecipeIngredient, RecipeIngredientCreate, RecipeIngredientResponse,
@@ -458,6 +459,77 @@ async def delete_document(document_id: int, db: AsyncSession = Depends(get_db)):
         os.remove(doc.file_path)
 
     await db.delete(doc)
+
+
+
+
+# ============ URL Import ============
+
+class UrlImportRequest(PydanticBaseModel):
+    url: str
+
+
+@router.post("/import-url", response_model=list[RecipeResponse])
+async def import_from_url(
+    request: UrlImportRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    """Import a recipe from a URL (TikTok, Instagram, YouTube, recipe blogs, etc.)."""
+    parser = RecipeParser()
+
+    try:
+        parsed = await parser.parse_recipe_from_url(request.url)
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=f"Failed to extract recipe from URL: {str(e)}")
+
+    # Handle error response from AI
+    if isinstance(parsed, dict) and "error" in parsed:
+        raise HTTPException(status_code=422, detail=parsed["error"])
+
+    # Normalize to list
+    if isinstance(parsed, dict):
+        parsed = [parsed]
+
+    created_recipes = []
+
+    for recipe_data in parsed:
+        db_recipe = Recipe(
+            name=recipe_data.get("name", "Untitled Recipe"),
+            description=recipe_data.get("description"),
+            instructions=recipe_data.get("instructions"),
+            prep_time_minutes=recipe_data.get("prep_time_minutes"),
+            cook_time_minutes=recipe_data.get("cook_time_minutes"),
+            servings=recipe_data.get("servings"),
+            source="url_import",
+            source_url=request.url,
+            tags=json.dumps(recipe_data.get("tags", [])) if recipe_data.get("tags") else None
+        )
+        db.add(db_recipe)
+        await db.flush()
+
+        # Add ingredients
+        for ing_data in recipe_data.get("ingredients", []):
+            ingredient = RecipeIngredient(
+                recipe_id=db_recipe.id,
+                ingredient_text=ing_data.get("text", str(ing_data)),
+                quantity=ing_data.get("quantity"),
+                unit=ing_data.get("unit"),
+                is_optional=ing_data.get("is_optional", False)
+            )
+            db.add(ingredient)
+
+        created_recipes.append(db_recipe)
+
+    await db.flush()
+
+    # Reload recipes with relationships
+    recipe_ids = [r.id for r in created_recipes]
+    reload_query = select(Recipe).options(
+        selectinload(Recipe.ingredients).selectinload(RecipeIngredient.product),
+        selectinload(Recipe.source_document)
+    ).where(Recipe.id.in_(recipe_ids))
+    reload_result = await db.execute(reload_query)
+    return reload_result.scalars().all()
 
 
 # ============ Recipe Actions ============
